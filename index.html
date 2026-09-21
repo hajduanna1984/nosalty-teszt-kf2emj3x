@@ -182,6 +182,15 @@
           border-radius:9999px;font-family:var(--pp);font-size:15px;
           font-weight:500;cursor:pointer}
   .fogomb:disabled{background:var(--subtle);cursor:not-allowed}
+  /* „Még nem teljes" állapot: a gomb halvány, DE kattintható — a kattintás
+     odagörget a hiányzó válaszhoz, ahelyett hogy némán nem történne semmi. */
+  .fogomb.varakozik{background:var(--subtle)}
+  /* a hiányzó válaszú kártya megvillantása */
+  @keyframes villan{
+    0%,100%{box-shadow:0 0 0 0 rgba(255,164,114,0)}
+    30%,70%{box-shadow:0 0 0 4px rgba(255,164,114,.55)}
+  }
+  .tal.hianyzik{animation:villan 1.6s ease-in-out;border-color:#ffa472}
   .masodgomb{padding:12px 20px;background:var(--base);color:var(--text);
              border:1px solid var(--line);border-radius:9999px;
              font-family:var(--pp);font-size:15px;cursor:pointer}
@@ -273,7 +282,13 @@
     .labin{gap:10px;max-width:none}
     .fogomb{padding:14px 24px;font-size:16px;flex:1}
     .masodgomb{padding:14px 18px}
-    .allapot{display:none}
+    /* Az állapot-szöveg mobilon KELL: e nélkül a kitöltő nem tudja meg,
+       miért nem lép tovább a teszt. Külön sorba tesszük a gombok fölé. */
+    .labin{flex-wrap:wrap}
+    .allapot{order:-1;width:100%;font-size:14px;text-align:center;
+             padding:10px 12px;margin-bottom:2px;border-radius:8px}
+    .allapot:not(:empty){background:#fff4ed;border:1px solid #ffa472;
+                         color:#a05a2c;font-weight:500}
     /* a fix lábléc miatti alsó helyfoglalás már nem kell */
     .wrap{padding-bottom:24px}
   }
@@ -880,7 +895,11 @@ function frissit(){
   document.getElementById('haladszam').textContent = szoveg;
   const t = document.getElementById('tovabbgomb');
   const van = kesz(i);
-  t.disabled = !van;
+  /* A gomb NEM disabled: a letiltott gomb kattintása nem vált ki eseményt,
+     így a kitöltő nem tudja meg, mi hiányzik. Inkább halvány, de kattintható
+     — és ilyenkor odagörget a hiányzó válaszhoz. */
+  t.disabled = false;
+  t.classList.toggle('varakozik', !van);
   t.textContent = (i === A.length-1) ? 'Befejezem' : 'Tovább';
   let hiany = '';
   if (!van){
@@ -888,14 +907,41 @@ function frissit(){
     const db = A[i].talalatok.length;
     const n1 = A[i].talalatok.filter(t => v.itelet && v.itelet[t.poz] !== undefined).length;
     const n2 = A[i].talalatok.filter(t => v.megnyit && v.megnyit[t.poz] !== undefined).length;
-    if (n1 < db) hiany = 'Még ' + (db-n1) + ' helyen hiányzik a „Jó találat-e?" válasz';
-    else hiany = 'Még ' + (db-n2) + ' helyen hiányzik a „Megnyitnád?" válasz';
+    const hatra = (db - n1) + (db - n2);
+    hiany = 'Még ' + hatra + ' válasz hiányzik — görgess végig az 5 recepten';
   }
   document.getElementById('allapot').textContent = hiany;
 }
 
+/* Az első hiányzó válaszhoz görget és megvillantja a kártyát.
+   E nélkül a kitöltő csak annyit lát, hogy „nem megy tovább". */
+function hianyMutat(){
+  const q = A[i];
+  const v = valasz[q.query] || {itelet:{}, megnyit:{}};
+  let cel = null, mit = '';
+  for (let n = 0; n < q.talalatok.length; n++){
+    const p = q.talalatok[n].poz;
+    if (!v.itelet || v.itelet[p] === undefined){ cel = p; mit = 'jo'; break; }
+    if (!v.megnyit || v.megnyit[p] === undefined){ cel = p; mit = 'megnyit'; break; }
+  }
+  if (cel === null) return;
+  const kartya = document.querySelector('.tal[data-poz="' + cel + '"]');
+  if (kartya){
+    kartya.scrollIntoView({block:'center', behavior:'smooth'});
+    kartya.classList.add('hianyzik');
+    setTimeout(() => kartya.classList.remove('hianyzik'), 1600);
+  }
+  const a = document.getElementById('allapot');
+  if (a){
+    // „az 5.” de „a 2.” — az 1 és az 5 kap „az”-t
+    const nevelo = (cel === 1 || cel === 5) ? 'Az ' : 'A ';
+    a.textContent = nevelo + cel + '. találatnál még hiányzik: ' +
+      (mit === 'jo' ? '„Jó találat-e?"' : '„Megnyitnád?"');
+  }
+}
+
 function tovabb(){
-  if (!kesz(i)) return;
+  if (!kesz(i)){ hianyMutat(); return; }
   if (i === A.length-1){ vege(); return; }
   // szakaszhatár? -> szünet
   const sz = szakaszIdx(i);
@@ -924,6 +970,7 @@ function vissza(){ if (i > 0){ i--; rajzol(); } }
     if (Math.abs(dy) > Math.abs(dx) * 0.7) return;      // inkább görgetés
     // csak a kérdés-lapon swipe-olunk (a szünet/záró lapon gomb van)
     if (document.getElementById('kerdes').classList.contains('rejt')) return;
+    // balra = tovább (ha hiányzik válasz, a tovabb() odagörget és jelzi)
     if (dx < 0) tovabb(); else vissza();
   }, {passive:true});
 })();
