@@ -161,8 +161,13 @@
   .vgomb.akt{background:var(--teal);border-color:var(--teal);color:#fff}
 
   /* ---- lablec ---- */
+  /* A lábléc mobilon NEM ugrálhat, amikor a böngésző címsora be-kicsúszik.
+     A transform saját rétegbe teszi (nincs újrafestés görgetéskor), a
+     safe-area padding pedig a iPhone alsó sávja alá igazítja. */
   .lab{position:fixed;bottom:0;left:0;right:0;background:var(--base);
-       border-top:1px solid var(--line);padding:12px 16px;z-index:20}
+       border-top:1px solid var(--line);padding:12px 16px;z-index:20;
+       transform:translateZ(0);will-change:transform;
+       padding-bottom:calc(12px + env(safe-area-inset-bottom, 0px))}
   .labin{max-width:860px;margin:0 auto;display:flex;gap:12px;
          align-items:center;justify-content:space-between}
   .fogomb{padding:12px 28px;background:var(--teal);color:#fff;border:none;
@@ -251,10 +256,18 @@
     .szunet{padding:26px 18px}
     .blokkq{padding:14px}
     .vgomb{font-size:14px;padding:10px 14px}
-    .labin{gap:8px}
-    .fogomb{padding:12px 20px}
-    .masodgomb{padding:12px 14px}
+
+    /* Mobilon a lábléc NEM lebeg: a tartalom végére kerül, az utolsó
+       találat alá. Így nincs mit ugrálnia a címsor mozgásakor, és ott
+       van, ahol a kitöltő épp végzett. */
+    .lab{position:static;border-top:none;background:transparent;
+         padding:0 12px;margin:4px 0 20px;transform:none;will-change:auto}
+    .labin{gap:10px;max-width:none}
+    .fogomb{padding:14px 24px;font-size:16px;flex:1}
+    .masodgomb{padding:14px 18px}
     .allapot{display:none}
+    /* a fix lábléc miatti alsó helyfoglalás már nem kell */
+    .wrap{padding-bottom:24px}
   }
 </style>
 </head>
@@ -328,9 +341,24 @@
     <p id="nevhiba" class="rejt" style="font-size:13px;color:var(--piros);
        background:var(--pirosbg);border:1px solid var(--piros);border-radius:8px;
        padding:10px 12px;margin:-8px 0 12px"></p>
-    <p style="font-size:13px;color:var(--subtle);margin:-8px 0 16px">
+    <p style="font-size:13px;color:var(--subtle);margin:-8px 0 20px">
       Nem gyűjtünk személyes adatot, és <strong>nem kell valódi név</strong> —
       de valamit írj be, hogy a válaszokat szét tudjuk választani egymástól.</p>
+
+    <div style="font-size:14px;font-weight:500;margin-bottom:6px">
+      Dolgozol a Centrálnál? <span style="color:var(--piros)">*</span></div>
+    <div class="valaszok" id="centralvalasz" style="margin-bottom:8px">
+      <button class="vgomb" data-ert="igen" onclick="centralValaszt('igen')">Igen</button>
+      <button class="vgomb" data-ert="nem" onclick="centralValaszt('nem')">Nem</button>
+    </div>
+    <p id="centralhiba" class="rejt" style="font-size:13px;color:var(--piros);
+       background:var(--pirosbg);border:1px solid var(--piros);border-radius:8px;
+       padding:10px 12px;margin:0 0 12px"></p>
+    <p style="font-size:13px;color:var(--subtle);margin:0 0 20px">
+      Ezt azért kérdezzük, mert aki a Nosaltynál dolgozik, máshogy néz egy
+      találati listát, mint egy kívülálló. A két csoportot külön is meg
+      akarjuk tudni nézni — <strong>egyik válasz sem „jobb"</strong>.</p>
+
     <button class="fogomb" onclick="indit()">Kezdjük</button>
   </div>
 
@@ -386,7 +414,7 @@ const SZAMITOTT = [
   ['vegyes', 'Vegyesen']
 ];
 
-let i = 0, nev = '', valasz = {}, kezdet = null, qkezdet = null,
+let i = 0, nev = '', central = null, valasz = {}, kezdet = null, qkezdet = null,
     viszSzoveg = {}, szamitott = {}, szamitottSzov = {};
 
 /* ---- SZAKASZOK: három tízes blokk ---- */
@@ -446,6 +474,7 @@ function kapuBelep(){
 const T = 'nosalty_kereso_teszt_v1';
 try { const m = localStorage.getItem(T);
       if (m) { const p = JSON.parse(m); valasz = p.valasz || {}; nev = p.nev || '';
+               central = p.central || null;
                kezdet = p.kezdet || null; viszSzoveg = p.vissza || {};
                szamitott = p.szamitott || {}; szamitottSzov = p.szamitottSzov || {}; } }
 catch(e){}
@@ -471,7 +500,7 @@ catch(e){}
 
 /* Minden kattintás után azonnal ment — több rétegben, hogy ne vesszen el. */
 function ment(){
-  const cs = JSON.stringify({nev, valasz, vissza: viszSzoveg,
+  const cs = JSON.stringify({nev, central, valasz, vissza: viszSzoveg,
     szamitott, szamitottSzov, kezdet, ido:Date.now(), v:3});
   try { localStorage.setItem(T, cs); } catch(e){
     try { sessionStorage.setItem(T, cs); } catch(e2){}
@@ -486,6 +515,24 @@ function nevValtozott(){
     h.classList.add('rejt');
     m.style.borderColor = '';
   }
+}
+
+/* Centrálos-e a kitöltő. Azért kérdezzük, mert a belsős és a külsős
+   szemlélet eltér — a két minta külön is kiértékelhető legyen. */
+function centralValaszt(ert){
+  central = ert;
+  const doboz = document.getElementById('centralvalasz');
+  if (doboz){
+    const gombok = doboz.querySelectorAll('.vgomb');
+    for (let k = 0; k < gombok.length; k++){
+      const g = gombok[k];
+      if (g.getAttribute('data-ert') === ert) g.classList.add('akt');
+      else g.classList.remove('akt');
+    }
+  }
+  const h = document.getElementById('centralhiba');
+  if (h) h.classList.add('rejt');
+  ment();
 }
 
 /* A szakasz-szünetek szöveges visszajelzése — gépelés közben ment, nem rajzol újra. */
@@ -512,6 +559,17 @@ function indit(){
   }
   hibaEl.classList.add('rejt');
   mezo.style.borderColor = '';
+  // a centrálos kérdés is kötelező
+  if (central !== 'igen' && central !== 'nem'){
+    const ch = document.getElementById('centralhiba');
+    if (ch){
+      ch.textContent = 'Válaszd ki, hogy dolgozol-e a Centrálnál — ' +
+                       'e nélkül nem tudjuk a két csoportot szétválasztani.';
+      ch.classList.remove('rejt');
+      ch.scrollIntoView({block:'center'});
+    }
+    return;
+  }
   nev = be;
   if (!kezdet) kezdet = Date.now();
   ment();
@@ -563,9 +621,13 @@ function szamitottValaszt(n, ert){
   szamitott[n] = (szamitott[n] === ert) ? undefined : ert;
   if (szamitott[n] === undefined) delete szamitott[n];
   ment();
-  // ujrarajzolas: a szoveges mezo megjelenik/eltunik
+  // Újrarajzolás (a szöveges mező megjelenik/eltűnik), de a görgetési
+  // pozíciót megtartjuk — ne ugorjon a lap tetejére egy gombnyomásra.
+  const y = window.pageYOffset ||
+            (document.documentElement && document.documentElement.scrollTop) || 0;
   if (blokkqHol === 'vege') vegeBlokkqRajzol();
   else szunetMutat(Number(n));
+  window.scrollTo({top:y, behavior:'instant'});
 }
 let szamIdozito = null;
 function szamSzovMent(n){
@@ -677,7 +739,7 @@ function rajzol(){
     const it = v.itelet[t.poz];
     let cls = it === 'jo' ? ' jo' : (it === 'nem' ? ' nem' : '');
     if (v.megnyit && v.megnyit[t.poz] === 'igen') cls += ' megnyitott';
-    h += '<div class="tal' + cls + '">';
+    h += '<div class="tal' + cls + '" data-poz="' + t.poz + '">';
     h += '<div class="talkep">';
     h += '<img src="' + esc(t.kep||'') + '" alt="" loading="lazy" ' +
          'onerror="this.style.visibility=\'hidden\'">';
@@ -688,16 +750,16 @@ function rajzol(){
     h += '<div class="talnev">' + esc(t.nev||'') + '</div>';
     h += '</div>';
     h += '<div class="gombok">';
-    h += '<button class="gomb' + (it==='jo'?' akt-jo':'') + '" ' +
+    h += '<button class="gomb' + (it==='jo'?' akt-jo':'') + '" data-ert="jo" ' +
          'onclick="itel(' + t.poz + ',\'jo\')">Jó</button>';
-    h += '<button class="gomb' + (it==='nem'?' akt-nem':'') + '" ' +
+    h += '<button class="gomb' + (it==='nem'?' akt-nem':'') + '" data-ert="nem" ' +
          'onclick="itel(' + t.poz + ',\'nem\')">Nem</button>';
     h += '</div>';
     const mny = v.megnyit ? v.megnyit[t.poz] : undefined;
     h += '<div class="megnyitoszlop">';
-    h += '<button class="mgomb' + (mny==='igen'?' akt-igen':'') + '" ' +
+    h += '<button class="mgomb' + (mny==='igen'?' akt-igen':'') + '" data-ert="igen" ' +
          'onclick="megnyitValaszt(' + t.poz + ',\'igen\')">Megnyitnám</button>';
-    h += '<button class="mgomb' + (mny==='nem'?' akt-nem':'') + '" ' +
+    h += '<button class="mgomb' + (mny==='nem'?' akt-nem':'') + '" data-ert="nem" ' +
          'onclick="megnyitValaszt(' + t.poz + ',\'nem\')">Nem</button>';
     h += '</div></div>';
   });
@@ -733,13 +795,40 @@ function rajzol(){
 function esc(s){ return String(s).replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
+/* Egy találat-kártya állapotának frissítése ÚJRARAJZOLÁS NÉLKÜL.
+   Korábban minden kattintás a teljes rajzol()-t hívta, ami a lap tetejére
+   ugrott — így viszont a görgetési pozíció változatlan marad. */
+function kartyaFrissit(poz){
+  const q = A[i].query;
+  const v = valasz[q] || {itelet:{}, megnyit:{}};
+  const it = (v.itelet || {})[poz];
+  const mny = (v.megnyit || {})[poz];
+  const kartya = document.querySelector('.tal[data-poz="' + poz + '"]');
+  if (!kartya) return;
+  // a kártya kerete/háttere
+  kartya.classList.remove('jo', 'nem', 'megnyitott');
+  if (it === 'jo') kartya.classList.add('jo');
+  else if (it === 'nem') kartya.classList.add('nem');
+  if (mny === 'igen') kartya.classList.add('megnyitott');
+  // a Jó / Nem gombok
+  const gj = kartya.querySelector('.gomb[data-ert="jo"]');
+  const gn = kartya.querySelector('.gomb[data-ert="nem"]');
+  if (gj) gj.classList.toggle('akt-jo', it === 'jo');
+  if (gn) gn.classList.toggle('akt-nem', it === 'nem');
+  // a Megnyitnám / Nem gombok
+  const mi = kartya.querySelector('.mgomb[data-ert="igen"]');
+  const mn = kartya.querySelector('.mgomb[data-ert="nem"]');
+  if (mi) mi.classList.toggle('akt-igen', mny === 'igen');
+  if (mn) mn.classList.toggle('akt-nem', mny === 'nem');
+}
+
 function itel(poz, ert){
   const q = A[i].query;
   if (!valasz[q]) valasz[q] = {itelet:{}};
   valasz[q].itelet[poz] = (valasz[q].itelet[poz] === ert) ? undefined : ert;
   if (valasz[q].itelet[poz] === undefined) delete valasz[q].itelet[poz];
   valasz[q].mp = Math.round((Date.now() - qkezdet)/1000);
-  ment(); rajzol();
+  ment(); kartyaFrissit(poz); frissit();
 }
 
 function megnyitValaszt(poz, ert){
@@ -750,7 +839,7 @@ function megnyitValaszt(poz, ert){
   m[poz] = (m[poz] === ert) ? undefined : ert;
   if (m[poz] === undefined) delete m[poz];
   valasz[q].mp = Math.round((Date.now() - qkezdet)/1000);
-  ment(); rajzol();
+  ment(); kartyaFrissit(poz); frissit();
 }
 
 function frissit(){
@@ -829,8 +918,9 @@ function osszeallit(){
   const mp = {};
   A.forEach(q => { const v = valasz[q.query]; if (v && v.mp) mp[q.id] = v.mp; });
   return {
-    v: 5,                                   // formátum-verzió
+    v: 6,                                   // formátum-verzió
     nev: nev,
+    central: central,              // 'igen' | 'nem' — centrálos dolgozó-e
     kuldve: new Date().toISOString(),
     percek: kezdet ? Math.round((Date.now()-kezdet)/60000) : null,
     keszult: A.filter((_,k)=>kesz(k)).length,
@@ -863,9 +953,12 @@ async function bekuld(){
       headers:{'Content-Type':'application/json', 'Accept':'application/json'},
       body: JSON.stringify({
         access_key: KULCS,
-        subject: 'Nosalty kereső-teszt — ' + nev,
+        subject: 'Nosalty kereső-teszt — ' + nev +
+                 (central === 'igen' ? ' (centrálos)' : ' (külsős)'),
         from_name: 'Nosalty kereső-teszt',
         kitolto: nev,
+        centralos: central === 'igen' ? 'IGEN — a Centrálnál dolgozik'
+                                      : 'nem — külsős',
         kesz_kerdes: adat.keszult + ' / ' + A.length,
         eltoltott_perc: adat.percek,
         MI_SZAMITOTT: Object.keys(szamitott).sort()
@@ -903,15 +996,16 @@ async function bekuld(){
 }
 
 function letolt(){
-  const sorok = [['nev','query','volumen','tipus','sav','blokk','pozicio','recept',
-                  'videos','jo_talalat','megnyitna','mi_szamitott','mi_szamitott_szoveg',
-                  'masodperc']];
+  const sorok = [['nev','centralos','query','volumen','tipus','sav','blokk','pozicio',
+                  'recept','videos','jo_talalat','megnyitna','mi_szamitott',
+                  'mi_szamitott_szoveg','masodperc']];
   A.forEach((q, k) => {
     const v = valasz[q.query] || {itelet:{}, megnyit:{}};
     const m = v.megnyit || {};
     const b = String(szakaszIdx(k));
     q.talalatok.forEach(t => {
-      sorok.push([nev, q.query, q.volumen, q.tipus, q.sav, Number(b)+1, t.poz, t.nev,
+      sorok.push([nev, central || '', q.query, q.volumen, q.tipus, q.sav,
+                  Number(b)+1, t.poz, t.nev,
                   t.video ? 'igen' : 'nem',
                   v.itelet[t.poz]==='jo' ? 'jo' : (v.itelet[t.poz]==='nem' ? 'nem' : ''),
                   m[t.poz]==='igen' ? 'igen' : (m[t.poz]==='nem' ? 'nem' : ''),
@@ -930,10 +1024,15 @@ function letolt(){
 
 /* ha van mentett allapot, felajanljuk a folytatast */
 function folytatasAjanlat(){
+  // a mentett becenév és a centrálos-válasz visszatöltése
+  if (nev) document.getElementById('nev').value = nev;
+  if (central === 'igen' || central === 'nem'){
+    const volt = central;          // a centralValaszt() nem kapcsolhatja ki
+    centralValaszt(volt);
+  }
   if (Object.keys(valasz).length === 0) return;
   const n = A.filter((_,k)=>kesz(k)).length;
-  if (n === 0) { if (nev) document.getElementById('nev').value = nev; return; }
-  if (nev) document.getElementById('nev').value = nev;
+  if (n === 0) return;
   const g = document.querySelector('#bevezeto .fogomb');
   const b = document.getElementById('bevezeto');
   const p = document.createElement('p');
