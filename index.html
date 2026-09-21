@@ -930,6 +930,8 @@ function vissza(){ if (i > 0){ i--; rajzol(); } }
 
 /* ---- BEKÜLDÉS ---- */
 const KULCS = 'f742ca45-00fc-4477-8a6c-c62f0595cdbd';
+let keszBekuldve = false;   // a végleges beküldés megtörtént-e
+let reszlegesElkuldve = 0;  // hány válasznál küldtünk utoljára részlegest
 
 function osszeallit(){
   const it = [];
@@ -959,6 +961,37 @@ function osszeallit(){
   };
 }
 
+/* A Web3Forms-csomag összeállítása. `reszleges` = még nem fejezte be,
+   ez a kilépéskor küldött mentés. */
+function csomag(adat, reszleges){
+  return {
+        access_key: KULCS,
+        subject: 'Nosalty kereső-teszt — ' + nev +
+                 (central === 'igen' ? ' (centrálos)' : ' (külsős)') +
+                 ' — ' + adat.keszult + '/' + A.length +
+                 (reszleges ? ' RÉSZLEGES' : ' kész'),
+        from_name: 'Nosalty kereső-teszt',
+        kitolto: nev,
+        centralos: central === 'igen' ? 'IGEN — a Centrálnál dolgozik'
+                                      : 'nem — külsős',
+        allapot: reszleges ? 'RÉSZLEGES — a kitöltő abbahagyta vagy elnavigált'
+                           : 'BEFEJEZETT — a kitöltő elküldte',
+        kesz_kerdes: adat.keszult + ' / ' + A.length,
+        eltoltott_perc: adat.percek,
+        MI_SZAMITOTT: Object.keys(szamitott).sort()
+          .map(k => (Number(k)+1) + '. blokk: ' +
+                    (szamitott[k] || []).map(x =>
+                      (SZAMITOTT.filter(o => o[0]===x)[0] || [x,x])[1]).join(' + '))
+          .join('\n') || '(nincs)',
+        SZOVEGES_VISSZAJELZES: [0,1,'vege']
+          .map(k => (viszSzoveg[k]||'').trim())
+          .filter(x => x)
+          .join('\n---\n') || '(nincs)',
+        VALASZOK_JSON: JSON.stringify(adat)
+  };
+}
+
+/* ---- A KITÖLTŐ VÉGLEGES BEKÜLDÉSE (a záró lap gombja) ---- */
 async function bekuld(){
   const utolso = String(SZAKASZ.length - 1);
   if (!(szamitott[utolso] || []).length){
@@ -972,32 +1005,11 @@ async function bekuld(){
   const vj = document.getElementById('visszajelzes');
   g.disabled = true; g.textContent = 'Küldés…';
   vj.classList.add('rejt');
-  const adat = osszeallit();
   try {
     const r = await fetch('https://api.web3forms.com/submit', {
       method:'POST',
       headers:{'Content-Type':'application/json', 'Accept':'application/json'},
-      body: JSON.stringify({
-        access_key: KULCS,
-        subject: 'Nosalty kereső-teszt — ' + nev +
-                 (central === 'igen' ? ' (centrálos)' : ' (külsős)'),
-        from_name: 'Nosalty kereső-teszt',
-        kitolto: nev,
-        centralos: central === 'igen' ? 'IGEN — a Centrálnál dolgozik'
-                                      : 'nem — külsős',
-        kesz_kerdes: adat.keszult + ' / ' + A.length,
-        eltoltott_perc: adat.percek,
-        MI_SZAMITOTT: Object.keys(szamitott).sort()
-          .map(k => (Number(k)+1) + '. blokk: ' +
-                    (szamitott[k] || []).map(x =>
-                      (SZAMITOTT.filter(o => o[0]===x)[0] || [x,x])[1]).join(' + '))
-          .join('\n') || '(nincs)',
-        SZOVEGES_VISSZAJELZES: [0,1,'vege']
-          .map(k => (viszSzoveg[k]||'').trim())
-          .filter(x => x)
-          .join('\n---\n') || '(nincs)',
-        VALASZOK_JSON: JSON.stringify(adat)
-      })
+      body: JSON.stringify(csomag(osszeallit(), false))
     });
     const j = await r.json();
     if (!j.success) throw new Error(j.message || 'ismeretlen hiba');
@@ -1008,6 +1020,7 @@ async function bekuld(){
       'border-radius:8px;padding:14px;color:var(--zold);font-weight:500">' +
       'Sikeresen elküldve &#10003;</div>';
     vj.classList.remove('rejt');
+    keszBekuldve = true;        // innentől nincs részleges küldés
     // a valaszokat MEGTARTJUK — ha barmi gond lenne, meg le lehet tolteni
     try { const m = JSON.parse(localStorage.getItem(T) || '{}');
           m.bekuldve = new Date().toISOString();
@@ -1021,6 +1034,67 @@ async function bekuld(){
     vj.classList.remove('rejt');
   }
 }
+
+/* ================= RÉSZLEGES BEKÜLDÉS =================
+   Ha a kitöltő abbahagyja — bezárja a fület, elnavigál, vagy hosszabb
+   időre eltűnik —, a válaszai csak a saját böngészőjében vannak, onnan
+   pedig nem jutnak el hozzánk. Ezért kilépéskor EGYSZER elküldjük, ami
+   addig megvan. Ha később visszatér és befejezi, a záró gomb küld egy
+   teljes csomagot, és a kiértékelő a teljesebbet tartja meg.
+
+   Miért sendBeacon: a böngésző bezárásakor a rendes fetch()-et a lap
+   megsemmisülése megszakítja; a sendBeacon a háttérben, a lap élete
+   után is befejezi a küldést. Nem ad vissza választ — ezért nem tudjuk
+   megvárni, de nem is kell. */
+function reszlegesBekuld(){
+  if (keszBekuldve) return;                 // már elküldte teljesen
+  if (!nev || !central) return;             // el sem indult
+  const kesz_db = A.filter((_,k) => kesz(k)).length;
+  if (kesz_db === 0) return;                // nincs mit küldeni
+  if (kesz_db <= reszlegesElkuldve) return; // nincs új adat a múltkorihoz
+  const adat = osszeallit();
+  const test = JSON.stringify(csomag(adat, true));
+  let ok = false;
+  try {
+    if (navigator.sendBeacon){
+      // a Web3Forms JSON-t vár; a Blob típusa adja a Content-Type-ot
+      ok = navigator.sendBeacon('https://api.web3forms.com/submit',
+             new Blob([test], {type:'application/json'}));
+    }
+  } catch(e){}
+  if (!ok){
+    // tartalék: keepalive fetch — ez is túléli a lap bezárását
+    try {
+      fetch('https://api.web3forms.com/submit', {
+        method:'POST', keepalive:true,
+        headers:{'Content-Type':'application/json'},
+        body: test
+      });
+      ok = true;
+    } catch(e){}
+  }
+  if (ok) reszlegesElkuldve = kesz_db;
+}
+
+(function kilepesFigyelo(){
+  // 1) a lap elrejtése (fül-váltás, bezárás, app-váltás mobilon).
+  //    Ez a legmegbízhatóbb jel — a mobil böngészők ezt küldik.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') reszlegesBekuld();
+  });
+  // 2) a lap elhagyása (desktop: bezárás, navigálás)
+  window.addEventListener('pagehide', reszlegesBekuld);
+  // 3) tétlenség: 3 perc után is küldünk, ha közben nem lépett tovább.
+  //    Van, aki nyitva hagyja a lapot és soha nem fejezi be.
+  let tetlen = null;
+  function ujraIndit(){
+    clearTimeout(tetlen);
+    tetlen = setTimeout(reszlegesBekuld, 180000);
+  }
+  ['click','touchstart','keydown','scroll'].forEach(e =>
+    document.addEventListener(e, ujraIndit, {passive:true}));
+  ujraIndit();
+})();
 
 function letolt(){
   // a többválasztós blokk-kérdés: minden szempont saját oszlop (Excelben szűrhető)
